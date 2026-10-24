@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Đo 150 mẫu HC-SR05</title>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #eef3f8;
+      color: #193047;
+      font-family: Arial, sans-serif;
+    }
+
+    main {
+      max-width: 1050px;
+      margin: auto;
+    }
+
+    h1 {
+      margin-bottom: 8px;
+    }
+
+    .serial-panel { display:flex; flex-wrap:wrap; gap:18px; align-items:center; margin-top:18px; }
+    .led { display:inline-block; width:13px; height:13px; border-radius:50%; background:#b8c4cf; margin-right:6px; }
+    .led.on { background:#19b55b; box-shadow:0 0 10px #19b55b; }
+    #txLed.on { background:#f59e0b; box-shadow:0 0 10px #f59e0b; }
+    #serialLog { white-space:pre-wrap; overflow:auto; max-height:160px; background:#f3f7fb; padding:12px; font-size:13px; }
+    .note {
+      color: #61758a;
+      line-height: 1.6;
+    }
+
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 22px;
+      margin-top: 18px;
+      box-shadow: 0 5px 20px #1930470c;
+    }
+
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    button {
+      padding: 12px 18px;
+      border: none;
+      border-radius: 9px;
+      background: #e7edf5;
+      color: #193047;
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: #147dce;
+      color: white;
+    }
+
+    button.stop {
+      background: #ffe5e5;
+      color: #b32929;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    #status {
+      margin-top: 16px;
+      line-height: 1.5;
+      color: #526980;
+    }
+
+    .distance {
+      text-align: center;
+      padding: 25px 0;
+    }
+
+    #distance {
+      font-size: 64px;
+      color: #147dce;
+      font-weight: bold;
+    }
+
+    .unit {
+      font-size: 24px;
+      color: #61758a;
+    }
+
+    progress {
+      width: 100%;
+      height: 18px;
+      accent-color: #147dce;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .stat {
+      background: #f3f7fb;
+      padding: 16px;
+      border-radius: 10px;
+    }
+
+    .stat span {
+      display: block;
+      color: #61758a;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .stat b {
+      font-size: 22px;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 260px;
+    }
+
+    .table-wrap {
+      max-height: 380px;
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 12px;
+      text-align: center;
+      border-bottom: 1px solid #e4ebf2;
+    }
+
+    th {
+      background: #f3f7fb;
+      position: sticky;
+      top: 0;
+    }
+
+    @media (max-width: 600px) {
+      body {
+        padding: 12px;
+      }
+
+      .card {
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+<main>
+  <h1>Đo 150 mẫu cảm biến HC-SR05</h1>
+
+  <div class="note">
+    Trig → D9 · Echo → D10 · Serial 9600 baud.<br>
+    Đóng Serial Monitor và Thonny trước khi kết nối.
+    Mẫu không nhận được Echo sẽ bị bỏ qua.
+  </div>
+
+  <section class="card">
+    <div class="buttons">
+      <button id="connect" class="primary">
+        Kết nối Arduino
+      </button>
+
+      <button id="start" class="primary" disabled>
+        Bắt đầu đo 150 mẫu
+      </button>
+
+      <button id="stop" class="stop" disabled>
+        Dừng đo
+      </button>
+
+      <button id="export" disabled>
+        Lưu Excel
+      </button>
+    </div>
+
+    <div id="status">Chưa kết nối Arduino.</div>
+    <div class="serial-panel">
+      <span><i id="rxLed" class="led"></i>Web RX ← Arduino TX: <b id="rxBytes">0</b> byte</span>
+      <span><i id="txLed" class="led"></i>Web TX → Arduino RX: <b id="txBytes">0</b> byte</span>
+      <button id="sendTest" disabled>Gửi thử TX (PING)</button>
+    </div>
+    <p class="note">Đèn báo hoạt động truyền dữ liệu USB Serial, không đọc trạng thái đèn vật lý trên bo. TX chỉ nháy khi web thực sự gửi dữ liệu.</p>
+    <pre id="serialLog" aria-label="Nhật ký Serial">Chưa có dữ liệu.</pre>
+  </section>
+
+  <section class="card">
+    <div class="distance">
+      <span id="distance">--</span>
+      <span class="unit">cm</span>
+    </div>
+
+    <progress id="progress" value="0" max="150"></progress>
+
+    <div class="stats">
+      <div class="stat">
+        <span>Số mẫu hợp lệ</span>
+        <b id="count">0 / 150</b>
+      </div>
+
+      <div class="stat">
+        <span>Trung bình (cm)</span>
+        <b id="mean">--</b>
+      </div>
+
+      <div class="stat">
+        <span>Nhỏ nhất (cm)</span>
+        <b id="min">--</b>
+      </div>
+
+      <div class="stat">
+        <span>Lớn nhất (cm)</span>
+        <b id="max">--</b>
+      </div>
+
+      <div class="stat">
+        <span>Độ lệch chuẩn mẫu (cm)</span>
+        <b id="sd">--</b>
+      </div>
+
+      <div class="stat">
+        <span>Lần mất Echo</span>
+        <b id="lost">0</b>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <canvas id="chart"></canvas>
+  </section>
+
+  <section class="card">
+    <div class="table-wrap" id="tableWrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Mẫu</th>
+            <th>Thời gian từ lúc bắt đầu (ms)</th>
+            <th>Khoảng cách (cm)</th>
+          </tr>
+        </thead>
+
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+  const TARGET = 150;
+  const BAUD_RATE = 9600;
+
+  const $ = id => document.getElementById(id);
+
+  let rxBytes = 0;
+  let txBytes = 0;
+  const ledTimers = {};
+  const serialMessages = [];
+
+  function flashLed(id) {
+    $(id).classList.add("on");
+    clearTimeout(ledTimers[id]);
+    ledTimers[id] = setTimeout(() => $(id).classList.remove("on"), 75);
+  }
+
+  function logSerial(direction, line) {
+    serialMessages.push(`${new Date().toLocaleTimeString("vi-VN")} ${direction}: ${line}`);
+    if (serialMessages.length > 50) serialMessages.shift();
+    $("serialLog").textContent = serialMessages.join("\n");
+    $("serialLog").scrollTop = $("serialLog").scrollHeight;
+  }
+
+  $("sendTest").onclick = async () => {
+    if (!port || !port.writable) return;
+    $("sendTest").disabled = true;
+    let writer;
+    try {
+      writer = port.writable.getWriter();
+      const data = new TextEncoder().encode("PING\n");
+      await writer.write(data);
+      txBytes += data.byteLength;
+      $("txBytes").textContent = txBytes;
+      flashLed("txLed");
+      logSerial("TX", "PING");
+    } catch (error) {
+      logSerial("Lỗi TX", error.message);
+    } finally {
+      if (writer) writer.releaseLock();
+      $("sendTest").disabled = !port;
+    }
+  };
+
+  let port = null;
+  let reader = null;
+
+  let measuring = false;
+  let samples = [];
+  let lostEcho = 0;
+  let startTime = 0;
+  let runStart = "";
+
+  function setStatus(message) {
+    $("status").textContent = message;
+  }
+
+  function calculateStats() {
+    const values = samples.map(sample => sample.distance);
+    const n = values.length;
+
+    if (n === 0) {
+      return null;
+    }
+
+    const mean = values.reduce((sum, value) => {
+      return sum + value;
+    }, 0) / n;
+
+    // Độ lệch chuẩn mẫu: chia cho n - 1.
+    const variance = n > 1
+      ? values.reduce((sum, value) => {
+          return sum + (value - mean) ** 2;
+        }, 0) / (n - 1)
+      : null;
+
+    return {
+      n,
+      mean,
+      min: Math.min(...values),
+      max: Math.max(...values),
+      sd: variance === null ? null : Math.sqrt(variance)
+    };
+  }
+
+  function updateDisplay() {
+    const stats = calculateStats();
+
+    $("count").textContent = `${samples.length} / ${TARGET}`;
+    $("progress").value = samples.length;
+    $("lost").textContent = lostEcho;
+
+    $("mean").textContent = stats
+      ? stats.mean.toFixed(3)
+      : "--";
+
+    $("min").textContent = stats
+      ? stats.min.toFixed(2)
+      : "--";
+
+    $("max").textContent = stats
+      ? stats.max.toFixed(2)
+      : "--";
+
+    $("sd").textContent = stats && stats.sd !== null
+      ? stats.sd.toFixed(3)
+      : "--";
+
+    $("export").disabled = samples.length === 0;
+
+    drawChart();
+  }
+
+  function stopMeasurement(message) {
+    measuring = false;
+
+    $("start").disabled = port === null;
+    $("stop").disabled = true;
+
+    setStatus(message);
+  }
+
+  function processLine(line) {
+    // Khớp dòng Arduino:
+    // Khoang cach: 25.34 cm
+    const match = line.match(
+      /^Khoang cach:\s*(\d+(?:\.\d+)?)\s*cm\s*$/i
+    );
+
+    if (!match) {
+      if (
+        measuring &&
+        /Khong nhan duoc tin hieu Echo/i.test(line)
+      ) {
+        lostEcho++;
+        updateDisplay();
+      }
+
+      return;
+    }
+
+    const distance = Number(match[1]);
+
+    if (!Number.isFinite(distance) || distance <= 0) {
+      return;
+    }
+
+    // Vẫn hiển thị khoảng cách trực tiếp khi chưa thu mẫu.
+    $("distance").textContent = distance.toFixed(2);
+
+    if (!measuring || samples.length >= TARGET) {
+      return;
+    }
+
+    const sample = {
+      index: samples.length + 1,
+      elapsedMs: Math.round(performance.now() - startTime),
+      distance,
+      timestamp: new Date().toLocaleString("vi-VN")
+    };
+
+    samples.push(sample);
+    appendTableRow(sample);
+    updateDisplay();
+
+    if (samples.length === TARGET) {
+      stopMeasurement("Đã đủ 150 mẫu. Đang tạo file Excel…");
+
+      try {
+        exportExcel();
+
+        setStatus(
+          "Đã đủ 150 mẫu và yêu cầu tải Excel. " +
+          "Nếu chưa thấy file, bấm Lưu Excel."
+        );
+      } catch (error) {
+        setStatus(
+          "Đã thu đủ 150 mẫu nhưng chưa xuất được Excel: " +
+          error.message +
+          " Dữ liệu vẫn còn trên trang; đừng đóng trang."
+        );
+      }
+    }
+  }
+
+  function appendTableRow(sample) {
+    const row = document.createElement("tr");
+
+    const values = [
+      sample.index,
+      sample.elapsedMs,
+      sample.distance.toFixed(2)
+    ];
+
+    values.forEach(value => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.appendChild(cell);
+    });
+
+    $("tableBody").appendChild(row);
+
+    const wrap = $("tableWrap");
+    wrap.scrollTop = wrap.scrollHeight;
+  }
+
+  async function readSerial() {
+    const currentPort = port;
+    const decoder = new TextDecoder();
+
+    let buffer = "";
+    let disconnectMessage = "Arduino đã ngắt kết nối.";
+
+    reader = currentPort.readable.getReader();
+
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+
+        if (done) {
+          break;
+        }
+
+        rxBytes += value.byteLength;
+        $("rxBytes").textContent = rxBytes;
+        flashLed("rxLed");
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex;
+
+        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+
+          buffer = buffer.slice(newlineIndex + 1);
+
+          logSerial("RX", line);
+          processLine(line);
+        }
+
+        // Bỏ dòng hỏng quá dài để tránh tích lũy bộ nhớ.
+        if (buffer.length > 4096) {
+          buffer = "";
+        }
+      }
+    } catch (error) {
+      disconnectMessage = "Lỗi kết nối: " + error.message;
+    } finally {
+      reader.releaseLock();
+      reader = null;
+
+      port = null;
+      $("sendTest").disabled = true;
+
+      stopMeasurement(
+        disconnectMessage +
+        " Có thể lưu các mẫu đã thu bằng nút Lưu Excel."
+      );
+
+      $("connect").disabled = false;
+
+      try {
+        await currentPort.close();
+      } catch {
+        // Thiết bị có thể đã bị rút khỏi máy.
+      }
+    }
+  }
+
+  $("connect").onclick = async () => {
+    if (!("serial" in navigator)) {
+      setStatus(
+        "Trình duyệt không hỗ trợ Web Serial. " +
+        "Hãy mở file bằng Chrome hoặc Edge trên máy tính."
+      );
+      return;
+    }
+
+    $("connect").disabled = true;
+
+    try {
+      const selectedPort = await navigator.serial.requestPort();
+
+      await selectedPort.open({
+        baudRate: BAUD_RATE
+      });
+
+      port = selectedPort;
+      rxBytes = txBytes = 0;
+      $("rxBytes").textContent = "0";
+      $("txBytes").textContent = "0";
+      $("sendTest").disabled = false;
+
+      $("start").disabled = false;
+
+      setStatus(
+        "Đã kết nối 9600 baud. " +
+        "Chờ Arduino khởi động và hiện khoảng cách, rồi bấm Bắt đầu."
+      );
+
+      readSerial();
+    } catch (error) {
+      $("connect").disabled = false;
+
+      setStatus(
+        "Không kết nối được: " + error.message +
+        ". Hãy kiểm tra cổng COM và đóng Serial Monitor / Thonny."
+      );
+    }
+  };
+
+  $("start").onclick = () => {
+    if (!port || measuring) {
+      return;
+    }
+
+    if (
+      samples.length > 0 &&
+      !confirm("Bắt đầu lượt mới sẽ xóa dữ liệu đang có trên trang. Tiếp tục?")
+    ) {
+      return;
+    }
+
+    samples = [];
+    lostEcho = 0;
+
+    startTime = performance.now();
+    runStart = new Date().toLocaleString("vi-VN");
+
+    $("tableBody").replaceChildren();
+
+    measuring = true;
+
+    $("start").disabled = true;
+    $("stop").disabled = false;
+
+    updateDisplay();
+
+    setStatus(
+      "Đang thu 150 mẫu hợp lệ. Giữ cố định cảm biến và vật đo."
+    );
+  };
+
+  $("stop").onclick = () => {
+    stopMeasurement(
+      `Đã dừng tại ${samples.length} mẫu. ` +
+      "Bạn có thể lưu Excel hoặc bắt đầu lượt mới."
+    );
+  };
+
+  $("export").onclick = () => {
+    try {
+      exportExcel();
+    } catch (error) {
+      setStatus(error.message);
+    }
+  };
+
+  function exportExcel() {
+    if (samples.length === 0) {
+      return;
+    }
+
+    if (typeof XLSX === "undefined") {
+      throw new Error(
+        "Chưa tải được thư viện Excel. " +
+        "Hãy kiểm tra Internet. Dữ liệu vẫn còn trên trang."
+      );
+    }
+
+    const stats = calculateStats();
+
+    const data = [
+      [
+        "STT",
+        "Thời gian từ lúc bắt đầu (ms)",
+        "Khoảng cách (cm)",
+        "Thời điểm nhận trên máy tính"
+      ],
+      ...samples.map(sample => [
+        sample.index,
+        sample.elapsedMs,
+        sample.distance,
+        sample.timestamp
+      ])
+    ];
+
+    const summary = [
+      ["Chỉ tiêu", "Giá trị"],
+      ["Cảm biến", "HC-SR05"],
+      ["Trig", "D9"],
+      ["Echo", "D10"],
+      ["Baud rate", BAUD_RATE],
+      ["Bắt đầu lượt đo", runStart],
+      ["Số mẫu hợp lệ", samples.length],
+      ["Lần không nhận Echo (bỏ qua)", lostEcho],
+      ["Khoảng cách trung bình (cm)", stats.mean],
+      ["Khoảng cách nhỏ nhất (cm)", stats.min],
+      ["Khoảng cách lớn nhất (cm)", stats.max],
+      [
+        "Độ lệch chuẩn mẫu (cm), chia n-1",
+        stats.sd === null ? "" : stats.sd
+      ],
+      [
+        "Ghi chú",
+        "Khoảng cách do Arduino gửi, làm tròn 0,01 cm. " +
+        "Thời gian là lúc máy tính nhận dữ liệu."
+      ]
+    ];
+
+    const workbook = XLSX.utils.book_new();
+
+    const dataSheet = XLSX.utils.aoa_to_sheet(data);
+    const summarySheet = XLSX.utils.aoa_to_sheet(summary);
+
+    dataSheet["!cols"] = [
+      { wch: 8 },
+      { wch: 32 },
+      { wch: 22 },
+      { wch: 32 }
+    ];
+
+    summarySheet["!cols"] = [
+      { wch: 42 },
+      { wch: 65 }
+    ];
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      dataSheet,
+      "Du lieu"
+    );
+
+    XLSX.utils.book_append_sheet(
+      workbook,
+      summarySheet,
+      "Thong ke"
+    );
+
+    const date = new Date();
+    const pad = value => String(value).padStart(2, "0");
+
+    const stamp =
+      date.getFullYear() + "-" +
+      pad(date.getMonth() + 1) + "-" +
+      pad(date.getDate()) + "_" +
+      pad(date.getHours()) + "-" +
+      pad(date.getMinutes()) + "-" +
+      pad(date.getSeconds());
+
+    XLSX.writeFile(
+      workbook,
+      `HC_SR05_${samples.length}_mau_${stamp}.xlsx`
+    );
+  }
+
+  function drawChart() {
+    const canvas = $("chart");
+    const context = canvas.getContext("2d");
+
+    const width = canvas.clientWidth || 800;
+    const height = 260;
+
+    const scale = window.devicePixelRatio || 1;
+
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+
+    context.scale(scale, scale);
+
+    const left = 58;
+    const right = 18;
+    const top = 35;
+    const bottom = 32;
+
+    const plotWidth = width - left - right;
+    const plotHeight = height - top - bottom;
+
+    context.clearRect(0, 0, width, height);
+
+    context.font = "12px Arial";
+    context.fillStyle = "#61758a";
+    context.fillText("Khoảng cách (cm)", 10, 18);
+
+    const values = samples.map(sample => sample.distance);
+
+    let min = values.length ? Math.min(...values) : 0;
+    let max = values.length ? Math.max(...values) : 100;
+
+    const padding = Math.max((max - min) * 0.15, 0.1);
+
+    min = Math.max(0, min - padding);
+    max += padding;
+
+    for (let i = 0; i <= 4; i++) {
+      const y = top + plotHeight * i / 4;
+      const value = max - (max - min) * i / 4;
+
+      context.strokeStyle = "#e2eaf2";
+      context.beginPath();
+      context.moveTo(left, y);
+      context.lineTo(width - right, y);
+      context.stroke();
+
+      context.fillStyle = "#61758a";
+      context.textAlign = "right";
+      context.fillText(value.toFixed(2), left - 8, y + 4);
+    }
+
+    context.textAlign = "center";
+
+    [1, 30, 60, 90, 120, 150].forEach(index => {
+      const x = left + plotWidth * (index - 1) / (TARGET - 1);
+      context.fillText(index, x, height - 10);
+    });
+
+    context.strokeStyle = "#147dce";
+    context.lineWidth = 2;
+    context.beginPath();
+
+    samples.forEach((sample, index) => {
+      const x = left + plotWidth * index / (TARGET - 1);
+
+      const y = top + plotHeight *
+        (max - sample.distance) / (max - min);
+
+      if (index === 0) {
+        context.moveTo(x, y);
+      } else {
+        context.lineTo(x, y);
+      }
+    });
+
+    context.stroke();
+
+    context.fillStyle = "#147dce";
+
+    samples.forEach((sample, index) => {
+      const x = left + plotWidth * index / (TARGET - 1);
+
+      const y = top + plotHeight *
+        (max - sample.distance) / (max - min);
+
+      context.beginPath();
+      context.arc(x, y, 2.5, 0, Math.PI * 2);
+      context.fill();
+    });
+  }
+
+  window.addEventListener("resize", drawChart);
+
+  window.addEventListener("beforeunload", event => {
+    if (measuring) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+  });
+
+  updateDisplay();
+</script>
+</body>
+</html>
